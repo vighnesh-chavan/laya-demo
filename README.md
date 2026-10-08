@@ -10,9 +10,35 @@ See [HOW_LAYA_WORKS.md](HOW_LAYA_WORKS.md) for how the decision logic actually w
 ## Setup
 
 ```bash
-cd /Users/vighnesh/Practice/laya-demo
+cd <repo>
 uv sync
 ```
+
+## Backend: heuristic vs laya-mlx
+
+By default this API runs on a hand-written heuristic — no model, sub-millisecond responses (see
+[HOW_LAYA_WORKS.md](HOW_LAYA_WORKS.md)). You can switch to the actual open-weight Laya model
+(from Convai Innovations, via `laya-mlx` running natively on Apple Silicon) using a `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+- `LAYA_BACKEND` — the on/off switch: `heuristic` = our own hand-written word-matching engine (no model at all), `laya-mlx` = the actual downloaded Laya model.
+- `LAYA_MODEL` — which Hugging Face repo to load the model from (only used when `LAYA_BACKEND=laya-mlx`). Defaults to `aac6fef/laya-typed-decisions-mlx` (421M, tuned for typed-decision workflows) — of the three available `laya-mlx` checkpoints, this one discriminated best in our own testing (see `LAYA_MLX_VS_HEURISTIC.md`). Others can be swapped in by changing this value — no code changes needed — but expect similar accuracy limitations; see that report for details.
+
+To use simulation only (no model, nothing downloaded): leave `LAYA_BACKEND=heuristic`, or don't create a `.env` file at all — that's the default, and the laya-mlx code path is never imported or loaded in that case.
+
+**Download/caching:** the first request after switching to `LAYA_BACKEND=laya-mlx` triggers a one-time
+download of the model weights, cached locally by Hugging Face Hub (typically `~/.cache/huggingface/`).
+Every request after that first load reuses the cache — no re-download unless the cache is cleared.
+
+**Latency trade-off:** laya-mlx is genuinely slower than the heuristic — expect roughly
+200–450ms per call on CPU (faster on Apple Silicon GPU via MLX, but still far from the heuristic's
+sub-millisecond responses). The FastAPI `/decide` contract (request/response shape) is identical
+either way, so nothing downstream changes — but if you run the games
+([shooting_range.py](shooting_range.py) / [play_doom.py](play_doom.py)) against laya-mlx,
+expect visibly laggier decisions, since they call `/decide` every 2–6 frames.
 
 ## Running
 
@@ -86,7 +112,7 @@ below are `POST /decide`.
   ]
 }
 ```
-→ `{"answer": "refund", "type": "enum", "confidence": 0.78, "latency_ms": 0.03}`
+→ `{"answer": "refund", "type": "enum", "confidence": 0.696, "latency_ms": 0.03}`
 
 ### enum — no word overlap at all (falls back to the first option, low confidence)
 ```json

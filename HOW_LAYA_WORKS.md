@@ -1,5 +1,10 @@
 # How Laya Works (Plain-English Report)
 
+> **Note:** everything below describes the `heuristic` backend (the default, `LAYA_BACKEND=heuristic`).
+> This project can also run against the actual open-weight Laya model via `LAYA_BACKEND=laya-mlx` — see
+> the "Backend: heuristic vs laya-mlx" section in [README.md](README.md) for how that works and
+> what changes (genuine model inference instead of word-counting, and noticeably higher latency).
+
 ## What Laya is, in one line
 
 Laya is a small API that answers **yes/no**, **pick-one-option**, or **give-a-number** questions instantly — without using any AI model. It just counts words.
@@ -107,11 +112,11 @@ The option's own words are: refund, money, back, for, delivery (5 words). Of tho
 {
   "answer": "refund",
   "type": "enum",
-  "confidence": 0.794,
+  "confidence": 0.745,
   "latency_ms": 0.023
 }
 ```
-*(Confidence shown here is slightly higher than the hand-calculated 0.696 because the live word-splitter also matches on shared filler words like "for" — the principle is identical, just an extra incidental match.)*
+*(This is a bit higher than the hand-calculated 0.696 in the walkthrough above because the walkthrough's word sets above still include filler words like "for". The real tokenizer deliberately strips common filler words — "a", "for", "in", "up", "the", "is", and similar — from *both* the question and the options before comparing, so the "refund" option's own word set actually shrinks to `{refund, money, back, delivery}` (4 words instead of 5), and the match becomes 2/4 = 0.5 instead of 2/5 = 0.4, pushing confidence to 0.745. This stopword filter matters: without it, a sentence like "no target in sight" would accidentally "match" any option description containing the word "in", just because both share a meaningless filler word.)*
 
 **A second example — where the "best" match is still weak:**
 ```json
@@ -153,6 +158,54 @@ If no number appears anywhere in the question, it just returns the midpoint of y
 > "Rate urgency from 1 to 10 — this seems like an 8" (min=1, max=10)
 
 Numbers found in the text: 1, 10, 8. Last one mentioned = 8. Since 8 is within range, answer = **8.0**, confidence = 0.9.
+
+---
+
+---
+
+## How the actual Laya model works (`LAYA_BACKEND=laya-mlx`)
+
+This project can also run against the actual open-weight Laya model (from Convai Innovations,
+via the `laya-mlx` package) instead of the heuristic above. This section explains how that one
+decides things, and how we translate between our simple API and its native format.
+
+**It's a real trained model, not word-counting.** `laya-mlx` loads a small decision transformer
+(as little as 322M parameters) that has actually learned to read a text description of a
+situation and produce a structured judgment — the same shape as a classifier, but phrased as
+typed questions it was trained on. No regexes, no hardcoded word lists.
+
+**Its native question types aren't quite `bool`/`enum`/`number` — they're `noul`/`choice`/`score`:**
+
+| Laya's native type | What it returns | What it's for |
+|---|---|---|
+| `noul` | a single probability, 0–1 | yes/no-style judgments |
+| `choice` | one label from a `criteria` dict, plus a confidence | picking one option among several |
+| `score` | an index into an ordered list of labeled buckets, plus a confidence | rating something on an ordinal scale |
+
+**How `app/real_engine.py` adapts each of our three question types onto that:**
+
+- **`bool` → `noul`**: we hand the question straight through as a single `noul` question. The model
+  returns a 0–1 value; `>= 0.5` becomes `True`. Confidence is just how far that value sits from the
+  0.5 fence (e.g. 0.9 → confident `True`; 0.15 → confident `False`).
+- **`enum` → `choice`**: our `options` list becomes the model's `criteria` dict (`{label: description}`).
+  The model picks one label directly and reports its own confidence for that pick — no word-counting
+  involved, it's weighing the option descriptions against the question with learned representations.
+- **`number` → `score`**: Laya's native `score` type only understands a small ordered list of labeled
+  buckets (e.g. 5 rungs from "very low" to "very high"), not an arbitrary continuous range. So we
+  generate 5 evenly-spaced buckets between your `min_value`/`max_value`, ask the model to pick a rung,
+  and linearly rescale that rung back into your original range. This is the one place where the
+  adapter is lossy — you get back one of 5 buckets' worth of precision, not a free-floating number.
+
+**What stays identical either way:** the `/decide` request/response shape (`answer`, `type`,
+`confidence`, `latency_ms`) never changes — `main.py` just points at `real_engine` instead of
+`engine` based on `LAYA_BACKEND`. Nothing downstream (the games, Swagger docs, this file's API
+examples) has to know or care which backend answered.
+
+**The real trade-off: latency.** The heuristic is sub-millisecond because it's just string
+matching. The real model is an actual neural network forward pass — expect roughly 50–450ms per
+call (varies with hardware and whether this is the first call after the model's weights finished
+loading). See the "Backend: heuristic vs laya-mlx" section in [README.md](README.md) for how to
+switch, and the download/caching details.
 
 ---
 

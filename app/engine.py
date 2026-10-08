@@ -12,9 +12,14 @@ from app.schemas import DecisionRequest, EnumOption
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
+_STOPWORDS = {
+    "a", "an", "the", "in", "on", "at", "to", "of", "up", "off", "is",
+    "are", "be", "and", "or", "for", "with", "this", "that", "it", "as",
+}
+
 
 def _tokenize(text: str) -> set[str]:
-    return set(_WORD_RE.findall(text.lower()))
+    return set(_WORD_RE.findall(text.lower())) - _STOPWORDS
 
 
 def _score_option(question_tokens: set[str], option: EnumOption) -> float:

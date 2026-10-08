@@ -1,8 +1,12 @@
+import os
 import time
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 
-from app import engine
+load_dotenv()
+
+from app import engine, real_engine
 from app.schemas import DecisionRequest, DecisionResponse
 
 app = FastAPI(
@@ -10,6 +14,9 @@ app = FastAPI(
     description="Open-source Jev alternative: instant typed decisions instead of text generation.",
     version="0.1.0",
 )
+
+BACKEND = os.getenv("LAYA_BACKEND", "heuristic")
+active_engine = real_engine if BACKEND == "laya-mlx" else engine
 
 
 @app.get("/health")
@@ -22,11 +29,11 @@ def decide(request: DecisionRequest) -> DecisionResponse:
     start = time.perf_counter()
 
     if request.type == "bool":
-        answer, confidence = engine.decide_bool(request.question)
+        answer, confidence = active_engine.decide_bool(request.question)
     elif request.type == "enum":
-        answer, confidence = engine.decide_enum(request.question, request.options)
+        answer, confidence = active_engine.decide_enum(request.question, request.options)
     else:
-        answer, confidence = engine.decide_number(
+        answer, confidence = active_engine.decide_number(
             request.question, request.min_value, request.max_value
         )
 
