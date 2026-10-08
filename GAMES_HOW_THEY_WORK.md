@@ -4,8 +4,8 @@ Both demos follow the exact same pattern: **the game does all the real spatial m
 (coordinates, distances, geometry), turns the result into a short English sentence, and only
 that sentence goes to Laya.** Laya never sees pixels, coordinates, or angles — it just picks
 whichever pre-written action description shares the most words with that sentence. The
-[HOW_LAYA_WORKS.md](HOW_LAYA_WORKS.md) doc covers the word-matching mechanism in detail; this
-doc is about how each game feeds Laya and uses its answer.
+[HOW_THE_HEURISTIC_WORKS.md](HOW_THE_HEURISTIC_WORKS.md) doc covers the word-matching mechanism
+in detail; this doc is about how each game feeds Laya and uses its answer.
 
 ---
 

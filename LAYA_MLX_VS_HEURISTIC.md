@@ -9,6 +9,41 @@ estimates.
 workflows"). This is now the default `LAYA_MODEL` — of the three available `laya-mlx`
 checkpoints, it was the best-discriminating one we found (see "Checkpoint comparison" below).
 
+## How laya-mlx actually computes an answer
+
+This is a real trained model, not word-counting (contrast with `app/engine.py`, the heuristic —
+see [HOW_THE_HEURISTIC_WORKS.md](HOW_THE_HEURISTIC_WORKS.md)). `laya-mlx` loads a small decision
+transformer (as little as 322M parameters) that has actually learned to read a text description
+of a situation and produce a structured judgment — the same shape as a classifier, but phrased as
+typed questions it was trained on. No regexes, no hardcoded word lists.
+
+**Its native question types aren't quite `bool`/`enum`/`number` — they're `noul`/`choice`/`score`:**
+
+| Laya's native type | What it returns | What it's for |
+|---|---|---|
+| `noul` | a single probability, 0–1 | yes/no-style judgments |
+| `choice` | one label from a `criteria` dict, plus a confidence | picking one option among several |
+| `score` | an index into an ordered list of labeled buckets, plus a confidence | rating something on an ordinal scale |
+
+**How `app/real_engine.py` adapts each of our three question types onto that:**
+
+- **`bool` → `noul`**: we hand the question straight through as a single `noul` question. The model
+  returns a 0–1 value; `>= 0.5` becomes `True`. Confidence is just how far that value sits from the
+  0.5 fence (e.g. 0.9 → confident `True`; 0.15 → confident `False`).
+- **`enum` → `choice`**: our `options` list becomes the model's `criteria` dict (`{label: description}`).
+  The model picks one label directly and reports its own confidence for that pick — no word-counting
+  involved, it's weighing the option descriptions against the question with learned representations.
+- **`number` → `score`**: Laya's native `score` type only understands a small ordered list of labeled
+  buckets (e.g. 5 rungs from "very low" to "very high"), not an arbitrary continuous range. So we
+  generate 5 evenly-spaced buckets between your `min_value`/`max_value`, ask the model to pick a rung,
+  and linearly rescale that rung back into your original range. This is the one place where the
+  adapter is lossy — you get back one of 5 buckets' worth of precision, not a free-floating number.
+
+**What stays identical either way:** the `/decide` request/response shape (`answer`, `type`,
+`confidence`, `latency_ms`) never changes — `main.py` just points at `real_engine` instead of
+`engine` based on `LAYA_BACKEND`. Nothing downstream (the games, Swagger docs) has to know or
+care which backend answered.
+
 ## Results
 
 | Flow | Metric | Heuristic | laya-mlx (`laya-typed-decisions-mlx`) |
@@ -68,7 +103,7 @@ wrong in a useful way.
 **Cons**
 - Brittle: only works because the option descriptions were hand-written to contain the exact
   words the heuristic looks for. Rephrase a question or option slightly and accuracy can collapse
-  (we hit this directly with the stopword bug — see `HOW_LAYA_WORKS.md`)
+  (we hit this directly with the stopword bug — see `HOW_THE_HEURISTIC_WORKS.md`)
 - Not a trained decision model — there's no generalization to novel phrasing, languages, or domains
   outside what the word lists anticipate
 - Doesn't scale as a demo of the "genuine AI typed-decisions" pitch — it's a convincing stand-in,

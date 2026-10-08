@@ -1,13 +1,14 @@
-# How Laya Works (Plain-English Report)
+# How the Heuristic Engine Works (Plain-English Report)
 
-> **Note:** everything below describes the `heuristic` backend (the default, `LAYA_BACKEND=heuristic`).
-> This project can also run against the actual open-weight Laya model via `LAYA_BACKEND=laya-mlx` — see
-> the "Backend: heuristic vs laya-mlx" section in [README.md](README.md) for how that works and
-> what changes (genuine model inference instead of word-counting, and noticeably higher latency).
+> **This file is about `app/engine.py` only** — the hand-written, no-model `heuristic` backend
+> (`LAYA_BACKEND=heuristic`, the default). It is **not** the real Laya model. For how the actual
+> open-weight Laya model (`LAYA_BACKEND=laya-mlx`) decides things, see
+> [LAYA_MLX_VS_HEURISTIC.md](LAYA_MLX_VS_HEURISTIC.md). For how to switch between the two, see
+> the "Backend: heuristic vs laya-mlx" section in [README.md](README.md).
 
-## What Laya is, in one line
+## What the heuristic is, in one line
 
-Laya is a small API that answers **yes/no**, **pick-one-option**, or **give-a-number** questions instantly — without using any AI model. It just counts words.
+It's a small piece of hand-written Python that answers **yes/no**, **pick-one-option**, or **give-a-number** questions instantly — without using any AI model. It just counts words.
 
 There is no machine learning, no training, no understanding of meaning. It is a set of simple rules dressed up to look like a smart decision engine.
 
@@ -15,12 +16,12 @@ There is no machine learning, no training, no understanding of meaning. It is a 
 
 ## The three question types
 
-Laya only answers three kinds of questions. You tell it which kind when you call the API.
+The heuristic only answers three kinds of questions. You tell it which kind when you call the API.
 
 ### 1. Yes/No questions (`bool`)
 
 **How it decides:**
-Laya keeps two hardcoded lists of words:
+It keeps two hardcoded lists of words:
 
 - **Positive list:** yes, good, safe, approve, valid, correct, true, allow, accept, confirm, ok, okay
 - **Negative list:** no, not, bad, unsafe, reject, invalid, incorrect, false, deny, never, cancel, refuse
@@ -45,14 +46,14 @@ Result: **answer = False**, confidence ≈ 0.82 (fairly confident, because it fo
 ### 2. Pick-one-option questions (`enum`)
 
 **How it decides:**
-You give Laya a list of options (e.g. "refund", "complaint", "spam"), each with a short label and optional description.
+You give it a list of options (e.g. "refund", "complaint", "spam"), each with a short label and optional description.
 
-Laya breaks your question into words, then breaks each option's label+description into words too. For every option, it checks: *"What fraction of this option's own words also showed up in the question?"*
+It breaks your question into words, then breaks each option's label+description into words too. For every option, it checks: *"What fraction of this option's own words also showed up in the question?"*
 
 Whichever option has the highest overlap fraction wins.
 
 **How confidence is calculated:**
-The higher that overlap fraction, the higher the confidence (up to ~0.99). A option with zero overlapping words still "wins" if all the other options overlap even less — but confidence stays at the floor (0.5).
+The higher that overlap fraction, the higher the confidence (up to ~0.99). An option with zero overlapping words still "wins" if all the other options overlap even less — but confidence stays at the floor (0.5).
 
 **Example:**
 > Question: "What category is a refund request for a late delivery?"
@@ -139,14 +140,14 @@ Response:
   "latency_ms": 0.018
 }
 ```
-None of the option words appear in the question at all — every option scores 0.0, so it's a 3-way tie. Laya just picks whichever option happens to come **first in your list** and reports the floor confidence (0.5) to signal "not sure." This is an important limitation: a tie doesn't mean "complaint" is genuinely the best fit — it means Laya found nothing useful to go on.
+None of the option words appear in the question at all — every option scores 0.0, so it's a 3-way tie. It just picks whichever option happens to come **first in your list** and reports the floor confidence (0.5) to signal "not sure." This is an important limitation: a tie doesn't mean "complaint" is genuinely the best fit — it means the heuristic found nothing useful to go on.
 
 ---
 
 ### 3. Give-a-number questions (`number`)
 
 **How it decides:**
-Laya just scans your question text for any digits (like "8", "3.5", "100"). If it finds one or more numbers, it takes the **last number mentioned** and clamps it to stay within the `min_value`/`max_value` range you specified.
+It just scans your question text for any digits (like "8", "3.5", "100"). If it finds one or more numbers, it takes the **last number mentioned** and clamps it to stay within the `min_value`/`max_value` range you specified.
 
 If no number appears anywhere in the question, it just returns the midpoint of your min/max range as a safe default guess.
 
@@ -161,54 +162,6 @@ Numbers found in the text: 1, 10, 8. Last one mentioned = 8. Since 8 is within r
 
 ---
 
----
-
-## How the actual Laya model works (`LAYA_BACKEND=laya-mlx`)
-
-This project can also run against the actual open-weight Laya model (from Convai Innovations,
-via the `laya-mlx` package) instead of the heuristic above. This section explains how that one
-decides things, and how we translate between our simple API and its native format.
-
-**It's a real trained model, not word-counting.** `laya-mlx` loads a small decision transformer
-(as little as 322M parameters) that has actually learned to read a text description of a
-situation and produce a structured judgment — the same shape as a classifier, but phrased as
-typed questions it was trained on. No regexes, no hardcoded word lists.
-
-**Its native question types aren't quite `bool`/`enum`/`number` — they're `noul`/`choice`/`score`:**
-
-| Laya's native type | What it returns | What it's for |
-|---|---|---|
-| `noul` | a single probability, 0–1 | yes/no-style judgments |
-| `choice` | one label from a `criteria` dict, plus a confidence | picking one option among several |
-| `score` | an index into an ordered list of labeled buckets, plus a confidence | rating something on an ordinal scale |
-
-**How `app/real_engine.py` adapts each of our three question types onto that:**
-
-- **`bool` → `noul`**: we hand the question straight through as a single `noul` question. The model
-  returns a 0–1 value; `>= 0.5` becomes `True`. Confidence is just how far that value sits from the
-  0.5 fence (e.g. 0.9 → confident `True`; 0.15 → confident `False`).
-- **`enum` → `choice`**: our `options` list becomes the model's `criteria` dict (`{label: description}`).
-  The model picks one label directly and reports its own confidence for that pick — no word-counting
-  involved, it's weighing the option descriptions against the question with learned representations.
-- **`number` → `score`**: Laya's native `score` type only understands a small ordered list of labeled
-  buckets (e.g. 5 rungs from "very low" to "very high"), not an arbitrary continuous range. So we
-  generate 5 evenly-spaced buckets between your `min_value`/`max_value`, ask the model to pick a rung,
-  and linearly rescale that rung back into your original range. This is the one place where the
-  adapter is lossy — you get back one of 5 buckets' worth of precision, not a free-floating number.
-
-**What stays identical either way:** the `/decide` request/response shape (`answer`, `type`,
-`confidence`, `latency_ms`) never changes — `main.py` just points at `real_engine` instead of
-`engine` based on `LAYA_BACKEND`. Nothing downstream (the games, Swagger docs, this file's API
-examples) has to know or care which backend answered.
-
-**The real trade-off: latency.** The heuristic is sub-millisecond because it's just string
-matching. The real model is an actual neural network forward pass — expect roughly 50–450ms per
-call (varies with hardware and whether this is the first call after the model's weights finished
-loading). See the "Backend: heuristic vs laya-mlx" section in [README.md](README.md) for how to
-switch, and the download/caching details.
-
----
-
 ## The honest summary
 
 | Question type | What it actually does | Smart-sounding part | What it really is |
@@ -217,8 +170,8 @@ switch, and the download/caching details.
 | `enum` | Measures word overlap per option | "picks best match" | Fraction math, no understanding |
 | `number` | Finds digits with a regex | "extracts the answer" | Regex pattern matching |
 
-**There is no context window, no memory, no reasoning, and no real model.** Every request is judged only by the exact words you put in that single `question` string. Nothing from previous requests carries over, and there's no understanding of grammar, sarcasm, negation subtleties ("not bad" would likely be misread), or anything outside the hardcoded word lists.
+**There is no context window, no memory, no reasoning, and no trained model.** Every request is judged only by the exact words you put in that single `question` string. Nothing from previous requests carries over, and there's no understanding of grammar, sarcasm, negation subtleties ("not bad" would likely be misread), or anything outside the hardcoded word lists.
 
 ## Why this still resembles "Laya" / "Jev"
 
-Real decision models (like the fictional Jev/Laya described in this demo's premise) are trained neural networks that *actually* understand language and output typed answers in milliseconds. This project mimics their **API shape** (typed input → typed output → confidence → latency) to demonstrate the concept and the pattern — but the "brain" behind it here is simple rule-based logic, not a trained model. It's a stand-in you could later swap out for a real classifier, embedding similarity search, or small local model without changing the API at all.
+Real decision models — the actual Laya (`LAYA_BACKEND=laya-mlx`) and the fictional Jev referenced in this demo's premise — are trained neural networks that *actually* understand language and output typed answers in milliseconds. This heuristic mimics their **API shape** (typed input → typed output → confidence → latency) to demonstrate the concept and the pattern — but the "brain" behind it here is simple rule-based logic, not a trained model. It's a stand-in that this project can swap out for the real Laya model (or your own classifier/embedding search) without changing the API at all — see [LAYA_MLX_VS_HEURISTIC.md](LAYA_MLX_VS_HEURISTIC.md) for how that swap performs in practice.

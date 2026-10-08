@@ -4,8 +4,9 @@ Open-source demo of a "typed decision" API — answers `bool` / `enum` / `number
 instantly instead of generating text. Includes two toy games (a real Doom scenario and a
 custom pygame shooting range) where Laya drives the gameplay decisions.
 
-See [HOW_LAYA_WORKS.md](HOW_LAYA_WORKS.md) for how the decision logic actually works, and
-[JEV_VS_LAYA.md](JEV_VS_LAYA.md) for the Jev vs Laya comparison.
+See [HOW_THE_HEURISTIC_WORKS.md](HOW_THE_HEURISTIC_WORKS.md) for how the default decision logic
+actually works, [LAYA_MLX_VS_HEURISTIC.md](LAYA_MLX_VS_HEURISTIC.md) for how the real Laya model
+works and compares, and [JEV_VS_LAYA.md](JEV_VS_LAYA.md) for the Jev vs Laya comparison.
 
 ## Setup
 
@@ -17,7 +18,7 @@ uv sync
 ## Backend: heuristic vs laya-mlx
 
 By default this API runs on a hand-written heuristic — no model, sub-millisecond responses (see
-[HOW_LAYA_WORKS.md](HOW_LAYA_WORKS.md)). You can switch to the actual open-weight Laya model
+[HOW_THE_HEURISTIC_WORKS.md](HOW_THE_HEURISTIC_WORKS.md)). You can switch to the actual open-weight Laya model
 (from Convai Innovations, via `laya-mlx` running natively on Apple Silicon) using a `.env` file:
 
 ```bash
